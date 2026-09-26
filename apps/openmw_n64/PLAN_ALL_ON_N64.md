@@ -22,7 +22,10 @@ accept that. The goal is:
 - **OpenMW's real game code runs on the N64.** That means `mwworld`,
   `mwmechanics`, `mwclass`, `mwscript`, `mwdialogue` and `mwstate`, compiled
   nearly unchanged, rather than copied and rewritten.
-- **All content:** Morrowind, Tribunal and Bloodmoon.
+- **Content: Morrowind first.** Tribunal and Bloodmoon are left out for now.
+  The target is a plain **64 MB cartridge with no SD card** (§4.7); the SD
+  card and writable cartridge memory described below become optional
+  extras, not requirements.
 - **Textures at their original resolution**, using the paging idea from
   CHROMA64. This is already working in the viewer (§1.3). They are stored
   compressed in CHROMA64's C64T format, about 1–1.5 bits per texel with every
@@ -483,6 +486,65 @@ The levers, all of which keep OpenMW's rules intact:
 
 ---
 
+### 4.7 Cartridge only: Morrowind in 64 MB
+
+The target: Morrowind (no expansions) on a plain 64 MB cartridge, **no SD
+card**, with an Expansion Pak. Everything here is an estimate until the
+census (below) runs on real game files.
+
+**What a plain cartridge changes.** Cartridge memory is read-only while the
+game runs. Read-only things (code, records, dialogue, meshes, textures,
+sound) can still be read straight from it on demand, 4 KB at a time through
+the TLB (§4.1). Anything that changes can't be swapped out to it, so the
+game's working memory must fit in the 8 MB of RDRAM:
+
+- OpenMW's `ESMStore` loads every record into RAM. Instead, records stay in
+  the ROM in the builder's compact form and are paged in when read; RAM
+  holds only what the player has changed (the same split as a save file).
+- Code is paged from the ROM as before; it never needs writing back.
+
+**The biggest item is `Morrowind.esm` itself**, about 80 MB, mostly
+terrain. The builder converts it:
+
+- Terrain (LAND): heights as quantized deltas, vertex colours compressed,
+  texture indices kept, normals dropped and rebuilt on the console.
+- Everything else: records, dialogue, books and scripts, compressed in
+  chunks small enough to unpack on demand.
+
+**Draft budget** (MB; the census replaces these with measured numbers):
+
+| Content | MB | How |
+|---|---:|---|
+| OpenMW code | 6 | about 11 MB without Lua and the old renderer (§3), compressed, paged 4 KB at a time |
+| Records, scripts, dialogue, books | 10 | converted ESM, compressed in chunks |
+| Terrain | 4 | quantized heights, compressed colours, shared ground textures |
+| Textures | 12 | C64T (§1.5); most capped at 128×128, surfaces seen up close at 256×256 |
+| Meshes: world, actors, items | 12 | quantized vertices, simplified distant versions |
+| Animation | 2.5 | compressed keyframes |
+| Collision | 1 | mostly built on the console from the meshes |
+| Icons, fonts, UI | 1 | |
+| Sound effects | 3 | |
+| Voice | 8 | low-bitrate Opus (libdragon's RSP-assisted player) |
+| Music | 4 | low-bitrate Opus |
+| **Total** | **63.5** | limit about 63.9 |
+
+**The trade-offs that make it fit**, in the order to use them if the census
+comes in over:
+
+1. Texture resolution. At 256×256 C64T puts Morrowind's textures at
+   40–60 MB; at 128×128, 8–11 MB. Keep 256 only where the player gets close.
+2. Voice and music bitrate.
+3. Mesh simplification for things seen only from a distance.
+
+**Saves** can't go in the ROM. Cartridge save memory (FlashRAM) is 128 KB,
+so a save holds only what changed since the start of the game, compressed.
+Whether a long game fits in 128 KB is an early test (S7 depends on it).
+
+**The census.** `builder/census` reads a `Data Files` folder (Morrowind.esm,
+Morrowind.bsa and loose files), converts or measures every category the way
+the builder would, and prints this table with real numbers for each quality
+tier. It is the first step, before any of the conversion work.
+
 ## 5. OpenMW code changes
 
 The goal is still to change OpenMW as little as possible:
@@ -514,6 +576,7 @@ Each milestone ends with a test that runs on real hardware.
 |---|---|---|---|
 | **S0** | **Hardware truth** | Measure on SummerCart64: PI DMA speed from cartridge SDRAM, writing SDRAM from the N64, SD read speed, and a TLB-miss round trip. Build an emulator harness: patch ares for writable cartridge space and SD, or find an emulator that already does both | **K1:** cartridge SDRAM can't be written from the N64 → no data paging → records go through the old roadmap's compact tables (ROADMAP.md §2) |
 | **S1** | **Paged code** | The current viewer runs with its code in mapped, paged memory. Count faults per frame | **K2:** the hot set doesn't fit (more than about 10 faults per frame in steady state, after reordering) → cut code (drop Lua, use `-fno-exceptions` where possible) or go back to the baker |
+| **S1b** | **Census** | `builder/census` on real Morrowind files prints the measured budget; one tier fits 63.9 MB | Over at every tier → drop voice first, then cap more textures at 64×64 |
 | **S2** | **Online builder v0** | A web page, entirely in the browser: pick a `Data Files` folder, get a ROM + SD pack. First with the example-suite, then real Morrowind. OpenMW's readers built to WebAssembly | **K3:** a full Morrowind build takes more than 30 minutes → cache per file, and convert in web workers |
 | **S3** | **OpenMW headless on the N64** | `apps/openmw` with a null renderer loads Morrowind.esm, starts a new game, runs scripts and dialogue in Seyda Neen. Measure page faults and CPU per frame | **K4:** the world update in Balmora takes more than 70 ms per frame after the §4.6 levers → the baker plan's copied rules win |
 | **S4** | **Renderer** | Tiny3D with screen-sized YC page streaming, pages decoded from C64T at load and refined in the background. Seyda Neen and Balmora at 12+ fps, with no page-streaming stalls | Pages never stall a frame (the parent mip level stands in); decoding too slow → ship the region's first mip levels pre-decoded |
