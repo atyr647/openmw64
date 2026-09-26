@@ -24,7 +24,9 @@ accept that. The goal is:
   nearly unchanged, rather than copied and rewritten.
 - **All content:** Morrowind, Tribunal and Bloodmoon.
 - **Textures at their original resolution**, using the paging idea from
-  CHROMA64. This is already working in the viewer (§1.3).
+  CHROMA64. This is already working in the viewer (§1.3). They are stored
+  compressed in CHROMA64's C64T format, about 1–1.5 bits per texel with every
+  mip level included, and decoded on the console (§1.5).
 
 **How it can work.** The trick is to stop treating the N64 as a machine with
 8 MB of memory. With a SummerCart64-class flashcart it has three levels:
@@ -173,6 +175,51 @@ version (§1.3).
 *Left to right: RGBA16 32×32 (too many pages this close, so it falls back to
 blurry), YC 64×64, CI4 64×64.*
 
+### 1.5 C64T: compressed textures, decoded on the console
+
+Pages fix drawing, but not size: YC pages are 8 bits per texel, CI4 4, plus a
+third for the mip levels. CHROMA64's **C64T** format (same branch) is a
+modern transform codec built so the N64 can decode it: YCoCg colour, the CDF
+9/7 wavelet, a context-adaptive range coder and rate-distortion-optimized
+quantization.
+
+- **Size.** About 1–1.5 bits per texel at 36–38 dB PSNR, all mips included.
+  On 47 CC0 textures that is 13–20 % smaller than JPEG XL, 17 % smaller than
+  WebP and 40–47 % smaller than JPEG at the same PSNR, and level with AVIF
+  above 36 dB. None of those can be decoded on an N64.
+- **On the N64's screen** (5-bit colour for every format), matching CI4's
+  quality takes 18–24 KB for a 256×256 texture where CI4 takes 32.5 KB, or
+  43 KB with its mips, which C64T includes. It has no palette banding.
+- **Mips are free and streamable.** Each mip level is a prefix of the file:
+  a 256×256 texture's 64×64 level is its first 2–6 KB.
+- **Decoding**, measured in ares, CPU and RSP together (they give identical
+  pixels, checked in `n64/c64t_bench`):
+
+  | Level | Time with the RSP | CPU alone |
+  |---|---:|---:|
+  | 256×256 | 210–435 ms | 1.0–1.2 s |
+  | 128×128 | 67–139 ms | 0.25–0.32 s |
+  | 64×64 | 25–54 ms | 66–90 ms |
+  | 512×512 | 840 ms | 5.9 s |
+
+  About 95 ms of a 256×256 level is RSP time, during which the RSP draws
+  nothing.
+
+**What it changes here.** A rough estimate, assuming Morrowind's 5,187
+textures average 256×256: YC pages with mips come to about 430 MB, C64T to
+40–60 MB (55–80 MB with the expansions). So the data pack shrinks by 7–10×,
+and a whole region's textures fit in cartridge SDRAM compressed. The cost
+moves to decoding:
+
+- At a cell change, decode each texture's **64×64 level first** (25–55 ms
+  each), then refine the ones near the camera to 128 and 256 in the
+  background, a slice per frame.
+- The RSP part runs between frames; Tiny3D and the decoder share the RSP
+  through rspq, so a slice must fit in the frame's spare RSP time.
+- The decoded pixels are RGBA16. Cutting them into 32×32 RGBA16 pages works
+  today; making the RSP's last stage write **YC pages directly** (it already
+  has the Y, Co and Cg planes) would keep the 64×64 pages that draw fastest.
+
 ---
 
 ## 2. What runs where
@@ -312,7 +359,7 @@ What this means:
 ### 4.2 Storage: SD card to cartridge SDRAM to RDRAM
 
 - **SD card: the builder's data pack** (`sd:/omw64/`). It holds every
-  converted texture page, mesh and sound, the ESM files (OpenMW's own record
+  texture (as C64T, §1.5), mesh and sound, the ESM files (OpenMW's own record
   loading reads them unchanged), and the saves. The BSAs aren't needed on
   the console any more. There is no 64 MB cap, which is what makes Tribunal
   and Bloodmoon possible.
@@ -322,7 +369,8 @@ What this means:
   - When it's filled: at load screens and cell changes, from the SD card.
   - Why: SD reads through libcart keep the CPU busy the whole time, so they
     must never happen in the middle of a frame.
-- **RDRAM: the pages this frame touches.**
+- **RDRAM: the pages this frame touches**, decoded from C64T when a region
+  loads and refined in the background (§1.5).
 - **Tribunal and Bloodmoon** only add to the data pack and to `ESMStore`.
   Their records page like the rest.
 
@@ -338,8 +386,8 @@ downloads two things:
 **Where the conversion runs.** It should run **in the browser**, so the game
 files never leave the player's computer:
 
-- CHROMA64's page encoder and DDS/TGA readers (`pages.ts`, `dds.ts`,
-  `split.ts`) already run in a browser.
+- CHROMA64's C64T and page encoders and its DDS/TGA readers (`c64t.ts`,
+  `pages.ts`, `dds.ts`, `split.ts`) already run in a browser.
 - OpenMW's readers (`components/esm3`, `bsa`, `nif`) are plain C++ and can
   be built to WebAssembly with Emscripten.
 
@@ -348,7 +396,7 @@ slow for the console:
 
 | Step | What | Estimate (browser) |
 |---|---|---|
-| Textures | 5,187 DDS in Morrowind.bsa, plus the expansions'. YC pages for most; CHROMA64's quadtree for sky, water and distant terrain, where it compresses well | about 0.1–0.2 s each for 256² YC, one core; web workers divide that by the core count |
+| Textures | 5,187 DDS in Morrowind.bsa, plus the expansions'. C64T for all of them (§1.5); CHROMA64's quadtree remains an option for sky, water and distant terrain | about 0.06 s each for 256² at a fixed quantizer step, 0.6 s when searching for a target PSNR (Node, one core); web workers divide that by the core count |
 | Meshes | 5,798 NIFs in Morrowind.bsa, plus the expansions'. Parse with `components/nif`, flatten, write N64 vertex data, and pre-split each mesh for each mip level | minutes |
 | Audio | Transcode the MP3 voice and music to a format libdragon plays cheaply: VADPCM, or Opus in wav64, which is RSP-assisted | minutes; MP3 decoding in the browser is fast |
 | ESM files | Copied as they are; the N64 runs OpenMW's own loader on them | — |
@@ -468,7 +516,7 @@ Each milestone ends with a test that runs on real hardware.
 | **S1** | **Paged code** | The current viewer runs with its code in mapped, paged memory. Count faults per frame | **K2:** the hot set doesn't fit (more than about 10 faults per frame in steady state, after reordering) → cut code (drop Lua, use `-fno-exceptions` where possible) or go back to the baker |
 | **S2** | **Online builder v0** | A web page, entirely in the browser: pick a `Data Files` folder, get a ROM + SD pack. First with the example-suite, then real Morrowind. OpenMW's readers built to WebAssembly | **K3:** a full Morrowind build takes more than 30 minutes → cache per file, and convert in web workers |
 | **S3** | **OpenMW headless on the N64** | `apps/openmw` with a null renderer loads Morrowind.esm, starts a new game, runs scripts and dialogue in Seyda Neen. Measure page faults and CPU per frame | **K4:** the world update in Balmora takes more than 70 ms per frame after the §4.6 levers → the baker plan's copied rules win |
-| **S4** | **Renderer** | Tiny3D with screen-sized YC page streaming. Seyda Neen and Balmora at 12+ fps, with no page-streaming stalls | Pages never stall a frame (the parent mip level stands in) |
+| **S4** | **Renderer** | Tiny3D with screen-sized YC page streaming, pages decoded from C64T at load and refined in the background. Seyda Neen and Balmora at 12+ fps, with no page-streaming stalls | Pages never stall a frame (the parent mip level stands in); decoding too slow → ship the region's first mip levels pre-decoded |
 | **S5** | **Sound, input, GUI** | MyGUI on rdpq; the menus, inventory, dialogue and journal work with a controller; voice plays | |
 | **S6** | **Physics and actors** | Walk, jump, swim, fight; 8 full-rate actors, the rest scheduled | Bullet too slow → native backend |
 | **S7** | **Saves and the vertical slice** | Chargen → Seyda Neen → Balmora → Caius → save and load on hardware. The `.omwsave` opens in desktop OpenMW | |
@@ -508,6 +556,8 @@ task:
   everything else.
 - That OpenMW's `components/esm3`, `bsa` and `nif` build with Emscripten
   without changes (they are plain C++, and already build for MIPS).
+- C64T decode times on real hardware (measured in ares only), and how much
+  RSP time Tiny3D leaves for decoding in the background.
 
 ---
 
