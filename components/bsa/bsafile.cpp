@@ -36,6 +36,7 @@
 #include <components/esm/fourcc.hpp>
 #include <components/files/constrainedfilestream.hpp>
 #include <components/files/utils.hpp>
+#include <components/misc/endianness.hpp>
 
 using namespace Bsa;
 
@@ -126,6 +127,9 @@ void BSAFile::readHeader(std::istream& input)
         if (input.fail())
             fail(std::format("Failed to read head: {}", std::generic_category().message(errno)));
 
+        for (uint32_t& v : head)
+            v = Misc::fromLittleEndian(v);
+
         if (head[0] != 0x100)
             fail("Unrecognized BSA header");
 
@@ -150,6 +154,9 @@ void BSAFile::readHeader(std::istream& input)
     if (input.fail())
         fail(std::format("Failed to read offsets: {}", std::generic_category().message(errno)));
 
+    for (uint32_t& v : offsets)
+        v = Misc::fromLittleEndian(v);
+
     // Read the string table
     mStringBuf.resize(dirsize - 12 * filenum);
     input.read(mStringBuf.data(), mStringBuf.size());
@@ -165,6 +172,12 @@ void BSAFile::readHeader(std::istream& input)
 
     if (input.fail())
         fail(std::format("Failed to read hashes: {}", std::generic_category().message(errno)));
+
+    for (Hash& h : hashes)
+    {
+        h.mLow = Misc::fromLittleEndian(h.mLow);
+        h.mHigh = Misc::fromLittleEndian(h.mHigh);
+    }
 
     // Calculate the offset of the data buffer. All file offsets are
     // relative to this. 12 header bytes + directory + hash table
@@ -210,7 +223,7 @@ void BSAFile::readHeader(std::istream& input)
 
         mFiles.push_back(fs);
 
-        endOfNameBuffer = std::max(endOfNameBuffer, nameOffset + nameSize + 1);
+        endOfNameBuffer = std::max<size_t>(endOfNameBuffer, nameOffset + nameSize + 1);
         assert(endOfNameBuffer <= mStringBuf.size());
     }
     mStringBuf.resize(endOfNameBuffer);
@@ -365,6 +378,9 @@ BsaVersion Bsa::BSAFile::detectVersion(const std::filesystem::path& filePath)
 
     if (input.gcount() != sizeof(head))
         return BsaVersion::Unknown;
+
+    for (uint32_t& v : head)
+        v = Misc::fromLittleEndian(v);
 
     if (head[0] == static_cast<uint32_t>(BsaVersion::Uncompressed))
     {

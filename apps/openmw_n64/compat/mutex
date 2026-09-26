@@ -1,0 +1,5 @@
+// Wraps the toolchain's <mutex> and adds single-threaded mutex types
+// (see n64_threads.hpp).
+#pragma once
+#include_next <mutex>
+#include "n64_threads.hpp"

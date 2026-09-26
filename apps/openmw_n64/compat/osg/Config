@@ -1,0 +1,13 @@
+/* Hand-written stand-in for the CMake-generated osg/Config.
+ * The N64 build only uses OSG's math headers (Vec/Quat/Matrixf/Plane/
+ * BoundingSphere), so everything is single precision: the VR4300 FPU
+ * is 32-bit friendly and RDRAM is scarce. */
+#ifndef OSG_CONFIG
+#define OSG_CONFIG 1
+#define OSG_NOTIFY_DISABLED
+#define OSG_USE_FLOAT_MATRIX
+#define OSG_USE_FLOAT_PLANE
+#define OSG_USE_FLOAT_BOUNDINGSPHERE
+#define OSG_USE_FLOAT_BOUNDINGBOX
+#define OSG_USE_FLOAT_QUAT
+#endif

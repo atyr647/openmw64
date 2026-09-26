@@ -1,0 +1,5 @@
+// Wraps the toolchain's <condition_variable> and adds single-threaded mutex types
+// (see n64_threads.hpp).
+#pragma once
+#include_next <condition_variable>
+#include "n64_threads.hpp"

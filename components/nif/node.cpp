@@ -2,17 +2,29 @@
 
 #include <cstdint>
 
+#ifdef OPENMW_N64
+// No Bullet on the N64 build; a complete type is still needed for unique_ptr.
+class btCollisionShape
+{
+public:
+    virtual ~btCollisionShape() = default;
+};
+#else
 #include <BulletCollision/CollisionShapes/btTriangleMesh.h>
 
 #include <components/misc/convert.hpp>
-#include <components/misc/strings/algorithm.hpp>
 #include <components/resource/bulletshape.hpp>
+#endif
+
+#include <components/misc/strings/algorithm.hpp>
 
 #include "data.hpp"
 #include "exception.hpp"
 #include "physics.hpp"
 #include "property.hpp"
 
+// The N64 port has no Bullet physics: collision shapes are not built there.
+#ifndef OPENMW_N64
 namespace
 {
 
@@ -59,6 +71,7 @@ namespace
     }
 
 }
+#endif // OPENMW_N64
 
 namespace Nif
 {
@@ -305,6 +318,9 @@ namespace Nif
 
     std::unique_ptr<btCollisionShape> NiTriShape::getCollisionShape() const
     {
+#ifdef OPENMW_N64
+        return nullptr;
+#else
         if (mData.empty() || mData->mVertices.empty())
             return nullptr;
 
@@ -343,10 +359,14 @@ namespace Nif
         std::ignore = mesh.release();
 
         return shape;
+#endif
     }
 
     std::unique_ptr<btCollisionShape> NiTriStrips::getCollisionShape() const
     {
+#ifdef OPENMW_N64
+        return nullptr;
+#else
         if (mData.empty() || mData->mVertices.empty())
             return nullptr;
 
@@ -384,6 +404,7 @@ namespace Nif
         std::ignore = mesh.release();
 
         return shape;
+#endif
     }
 
     std::unique_ptr<btCollisionShape> NiLines::getCollisionShape() const
