@@ -210,8 +210,7 @@ namespace OMW64
         const float secY = std::sqrt(1.f + tanY * tanY);
         const float secX = std::sqrt(1.f + tanX * tanX);
 
-        const Texture* bound = nullptr;
-        bool texturing = false;
+        GLuint bound = 0; // GL name of the bound texture or page, 0 = untextured
         bool alphaTest = false;
         bool culling = true;
         GLfloat emission[4] = { 0.f, 0.f, 0.f, 1.f };
@@ -242,17 +241,20 @@ namespace OMW64
                 glScalef(extra, extra, extra);
             for (const MeshPart& part : inst.mModel->mParts)
             {
-                if (part.mTexture != bound || (part.mTexture != nullptr) != texturing)
+                // A paged part draws from one TMEM page of its texture.
+                const GLuint name = part.mTexture == nullptr ? 0
+                    : part.mPage >= 0                        ? part.mTexture->mPages[part.mPage].mName
+                                                             : part.mTexture->mName;
+                if (name != bound)
                 {
-                    texturing = part.mTexture != nullptr;
-                    if (texturing)
+                    if (name != 0)
                     {
                         glEnable(GL_TEXTURE_2D);
-                        glBindTexture(GL_TEXTURE_2D, part.mTexture->mName);
+                        glBindTexture(GL_TEXTURE_2D, name);
                     }
                     else
                         glDisable(GL_TEXTURE_2D);
-                    bound = part.mTexture;
+                    bound = name;
                 }
                 if (part.mAlphaTest != alphaTest)
                 {
@@ -270,7 +272,15 @@ namespace OMW64
                     glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, emission);
                 }
 
-                glCallList(part.mList);
+                if (part.mList != 0)
+                    glCallList(part.mList);
+                else
+                {
+                    glBindVertexArray(part.mVertexArray);
+                    glBindBufferARB(GL_ELEMENT_ARRAY_BUFFER_ARB, part.mBuffers[1]);
+                    glDrawElements(GL_TRIANGLES, part.mIndexCount, GL_UNSIGNED_SHORT, nullptr);
+                    glBindVertexArray(0);
+                }
             }
             glPopMatrix();
         }

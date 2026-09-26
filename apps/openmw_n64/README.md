@@ -13,7 +13,7 @@ libdragon:
 - `components/nif` parses the `.nif` meshes
 
 Everything under `components/` is compiled straight from this tree. The N64
-front end (this directory) is about 2,200 lines of C++.
+front end (this directory) is about 2,600 lines of C++.
 
 | Test cell (loads, textures, alpha, NIF node transforms) | Load summary, with the textures as uploaded |
 |---|---|
@@ -52,6 +52,7 @@ to help find them.
 |---|---|
 | D-pad up/down | choose a cell |
 | D-pad left/right, C-up/down | page up/down |
+| Z | textures: 32×32, or native-resolution pages |
 | A or START | load the cell |
 
 | Walking | |
@@ -74,7 +75,8 @@ Works:
   nodes, hidden and collision nodes skipped
 - Textures: DDS (DXT1/3/5, uncompressed) and TGA, from BSAs or loose files
   (loose files win, like in the game), shrunk to fit the N64's 4 KB texture
-  memory (at most 32×32 texels, RGBA 5551)
+  memory (at most 32×32 texels, RGBA 5551) — or, with **Z** in the cell
+  list, kept at native resolution as 32×32 pages (see below)
 - Vertex colors, material color/emission, alpha testing, two-sided materials
 - Cell ambient and "sunlight" colors (the `AMBI` record) as the lighting
 
@@ -88,11 +90,32 @@ Not (yet):
 - Gameplay of any kind: scripts, dialogue, physics, UI, sound
 
 Performance: the 20×20-crate stress cell (401 objects, ~2,400 triangles on
-screen) runs at about 18 fps in ares. Real Morrowind interiors have several
-times that many triangles, so expect single-digit frame rates in big rooms
-until there is some level-of-detail work.
+screen) runs at about 10 fps in ares, or about 18 fps in a
+`make DISPLAY_LISTS=1` build (see the gotchas below for why that is not the
+default). Real Morrowind interiors have several times that many triangles, so
+expect single-digit frame rates in big rooms until there is some
+level-of-detail work.
 
 ![Stress test](docs/stress.png)
+
+### Native-resolution texture pages (CHROMA64-style)
+
+The N64 can only texture from its 4 KB TMEM, which is why textures are
+normally shrunk to 32×32. [CHROMA64](https://github.com/atyr647/chroma64) gets
+around that by cutting a big texture into TMEM-sized **pages** and cutting
+each triangle along the page borders, so every piece only needs one page.
+Pressing **Z** in the cell list turns the same idea on here: every texture up
+to 256×256 is kept at full resolution as 32×32 RGBA16 pages, and meshes are
+split along the page grid when they load.
+
+![32×32 textures (left) and native-resolution pages (right), same view](docs/paged.png)
+
+*Left: the normal 32×32 textures, 60 fps. Right: native-resolution pages,
+same camera, 8 fps.* It looks like the original textures, but it is slow: the
+crate's 24 triangles become 1,032 when cut along the page grid, and paged
+parts can't use display lists. It is a proof of concept for the texture plan
+in [PLAN_ALL_ON_N64.md](PLAN_ALL_ON_N64.md), which bounds that cost by
+choosing each object's page resolution from its size on screen.
 
 ## Why not the whole game?
 
@@ -152,9 +175,18 @@ Useful if you build anything else with libdragon's OpenGL (preview branch):
 - `glTexParameteri(..., GL_TEXTURE_WRAP_*)` must come before
   `glSurfaceTexImageN64`, or libdragon asserts.
 - libdragon defines `N64` as a macro, so don't name a namespace `N64`.
-- Recording each mesh into a display list doubled the frame rate versus
-  drawing from vertex arrays, since the CPU no longer re-converts every vertex
-  every frame.
+- Recording each mesh into a display list roughly doubles the frame rate
+  versus drawing from vertex arrays, since the CPU no longer re-converts
+  every vertex every frame. **But** replaying display lists crashes the RSP
+  now and then: an RSP/RDP hang ("wait loop timed out" in `rspq_next_buffer`)
+  or a `break` in the generated vertex loader. It comes and goes with
+  unrelated changes to the program and camera angle, and it always happens
+  with many small lists and a texture switch between each one. Vertex arrays
+  never crashed in any of the same tests, so they are the default here;
+  `make DISPLAY_LISTS=1` turns the lists back on.
+- The fps counter must average frame *times*: averaging `1/dt` read
+  1,694 fps once, because with triple buffering some frames return from
+  `display_get()` almost at once.
 
 ## Building
 
@@ -181,22 +213,27 @@ python3 tools/make_test_data.py          # optional: test data into filesystem/ 
 make OSG_SRC=/path/to/osg -j4            # -> openmw_n64.z64
 ```
 
-`tools/make_test_data.py --example-suite DIR` also pulls two CC0 textures (a
-DXT1 rock and a DXT5 fern with alpha) from a git-lfs checkout of
+`tools/make_test_data.py --example-suite DIR` also pulls CC0 textures (a
+DXT5 fern with alpha, and — resized to 256×256 with ImageMagick, if
+installed — rock, road and barrel textures) from a git-lfs checkout of
 [OpenMW's example-suite](https://gitlab.com/OpenMW/example-suite).
 
 For emulator testing, `make AUTOPLAY=1 AUTOPLAY_CELL="Test Hall"` builds a ROM
-that enters that cell and turns the camera by itself. The screenshots here were
+that enters that cell and turns the camera by itself. Add
+`AUTOPLAY_YAW=0.0 AUTOPLAY_PITCH=-0.35` for a fixed camera (for comparing
+screenshots), and `PAGED=1` to start with native-resolution textures. The screenshots here were
 taken that way in headless ares, built with the Pak repository's
 `tools/build_ares.sh`.
 
 ## Where this could go next
 
+[PLAN_ALL_ON_N64.md](PLAN_ALL_ON_N64.md) is the current plan: the whole game
+on the console, with no PC tool. It replaces the PC-baker design in
+[ROADMAP.md](ROADMAP.md). Smaller next steps for the viewer:
+
 - Exterior cells: `LAND` heightmaps are regular 65×65 grids, a good fit for
   the N64 once reduced
 - Point lights from `LIGH` references (libdragon GL has 8 lights)
 - Level of detail: drop small objects at distance and cap triangles per frame
-- An offline "baker" that runs these same OpenMW readers on a PC and writes
-  N64-ready meshes and textures, so the N64 skips parsing and resampling.
-  [CHROMA64](https://github.com/atyr647/chroma64)'s texture pipeline would fit
-  there.
+- Choose each object's texture page size from its size on screen, and use
+  64×64 pages, to cut the triangle cost of paging

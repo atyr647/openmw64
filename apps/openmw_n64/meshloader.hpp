@@ -29,17 +29,24 @@ namespace OMW64
 
     // A run of triangles sharing one texture and render state.
     //
-    // Geometry is built in mVertices/mIndices, then recorded into a GL
-    // display list: libdragon converts the vertices to the RSP's fixed-point
-    // format once, and each frame just replays the command block, instead of
-    // the VR4300 re-converting every vertex every frame. The source vectors
-    // and the temporary buffer objects are freed afterwards.
+    // Geometry is built in mVertices/mIndices, then moved into GL buffer
+    // objects drawn through a vertex array. With `make DISPLAY_LISTS=1` it
+    // is recorded into a display list instead: libdragon converts the
+    // vertices to the RSP's fixed-point format once, and each frame just
+    // replays the command block, instead of the VR4300 re-converting every
+    // vertex every frame. That is about twice as fast but crashes
+    // libdragon's RSP GL pipeline now and then (preview 39d0d60), and always
+    // for parts cut into texture pages, which therefore never use one.
     struct MeshPart
     {
         std::vector<Vertex> mVertices;
         std::vector<std::uint16_t> mIndices;
         GLuint mList = 0; // display list replaying the draw on the RSP
+        GLuint mVertexArray = 0; // only for parts drawn without a display list
+        GLuint mBuffers[2] = { 0, 0 };
+        GLsizei mIndexCount = 0;
         const Texture* mTexture = nullptr;
+        int mPage = -1; // index into mTexture->mPages, or -1 for the whole (small) texture
         float mEmissive[3] = { 0.f, 0.f, 0.f };
         bool mAlphaTest = false;
         bool mTwoSided = false;
@@ -49,7 +56,7 @@ namespace OMW64
         MeshPart& operator=(MeshPart&&) = delete;
         ~MeshPart();
 
-        void upload();
+        void upload(bool displayList);
     };
 
     // A NIF flattened for drawing: every node transform is baked into the

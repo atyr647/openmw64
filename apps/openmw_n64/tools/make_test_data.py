@@ -20,7 +20,10 @@ https://gitlab.com/OpenMW/example-suite (DXT1 rock, DXT5 fern with alpha).
 import argparse
 import math
 import os
+import shutil
 import struct
+import subprocess
+import tempfile
 
 
 # --------------------------------------------------------------------------
@@ -463,6 +466,20 @@ def make_esm():
     return record('TES3', [sub('HEDR', hedr)]) + b''.join(body)
 
 
+def imagemagick_dds(path, size):
+    """DXT1 DDS with a full mip chain via ImageMagick, or None if unavailable."""
+    if not os.path.exists(path) or open(path, 'rb').read(4) != b'DDS ':
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        dst = os.path.join(tmp, 'out.dds')
+        try:
+            subprocess.run(['convert', path, '-resize', f'{size}x{size}!', '-define', 'dds:compression=dxt1',
+                            '-define', 'dds:mipmaps=8', 'dds:' + dst], check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        return open(dst, 'rb').read()
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -481,10 +498,24 @@ def main():
     wall_texture = 'tx_n64_stone.tga'
     fern_texture = 'tx_n64_crate.tga'
     rock = fern = None
+    planks_dds = make_dds(64, 64, planks)
+    crate_dds = make_dds(64, 64, crate)
+    if args.example_suite and shutil.which('convert'):
+        # Morrowind-sized (256x256 DXT1 with mipmaps) versions of CC0 textures,
+        # so native-resolution texture paging has real detail to show.
+        es = args.example_suite
+        barrel = os.path.join(es, 'example_static_props', 'data', 'textures', 'the_barrel.dds')
+        road = os.path.join(es, 'the_hub', 'data', 'textures', 'ground', 'road_01.dds')
+        rock256 = os.path.join(es, 'game_template', 'data', 'textures', 'tx_rock_01.dds')
+        crate_dds = imagemagick_dds(barrel, 256) or crate_dds
+        planks_dds = imagemagick_dds(road, 256) or planks_dds
+        rock = imagemagick_dds(rock256, 256)
+        if rock:
+            wall_texture = 'tx_rock_01.tga'
     if args.example_suite:
         rock_path = os.path.join(args.example_suite, 'game_template', 'data', 'textures', 'tx_rock_01.dds')
         fern_path = os.path.join(args.example_suite, 'the_hub', 'data', 'textures', 'fern_01.dds')
-        if os.path.exists(rock_path) and open(rock_path, 'rb').read(4) == b'DDS ':
+        if not rock and os.path.exists(rock_path) and open(rock_path, 'rb').read(4) == b'DDS ':
             rock = open(rock_path, 'rb').read()
             wall_texture = 'tx_rock_01.tga'
         if os.path.exists(fern_path) and open(fern_path, 'rb').read(4) == b'DDS ':
@@ -495,8 +526,8 @@ def main():
         ('meshes\\test\\floor.nif', floor_nif()),
         ('meshes\\test\\walls.nif', walls_nif(wall_texture)),
         ('meshes\\test\\crate.nif', crate_nif()),
-        ('textures\\tx_n64_planks.dds', make_dds(64, 64, planks)),
-        ('textures\\tx_n64_crate.dds', make_dds(64, 64, crate)),
+        ('textures\\tx_n64_planks.dds', planks_dds),
+        ('textures\\tx_n64_crate.dds', crate_dds),
         ('textures\\tx_n64_stone.dds', make_dds(64, 64, stone)),
     ]
     if rock:

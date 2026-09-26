@@ -39,6 +39,14 @@ namespace
     constexpr bool sAutoplay = false;
 #endif
 
+    // Largest texture side kept at native resolution when paging is on.
+    constexpr int sPageCap = 256;
+#ifdef OMW64_PAGED_DEFAULT
+    constexpr bool sPagedDefault = true;
+#else
+    constexpr bool sPagedDefault = false;
+#endif
+
     int usedKb()
     {
         heap_stats_t stats;
@@ -108,6 +116,7 @@ namespace
         OMW64::Renderer mRenderer;
         OMW64::Renderer::Camera mCamera;
         int mSelected = 0;
+        bool mPaged = sPagedDefault; // CHROMA64-style native-resolution texture pages
 
         void boot()
         {
@@ -164,6 +173,8 @@ namespace
                 if (pressed.d_left || pressed.c_up || (held.r && held.d_up))
                     step = -sMenuRows;
                 mSelected = (mSelected + step + count) % count;
+                if (pressed.z)
+                    mPaged = !mPaged;
                 if (pressed.a || pressed.start)
                     return;
 
@@ -177,6 +188,7 @@ namespace
                         text(
                             12, 34 + row * sLineHeight, "%c %.36s", i == mSelected ? '>' : ' ', cells[i].mName.c_str());
                     }
+                    text(12, 210, "Z: textures %s", mPaged ? "native pages (chroma64-style)" : "32x32");
                     text(12, 222, "D-pad: choose   A: enter   RAM %d/%d KB", usedKb(), totalKb());
                 });
             }
@@ -188,6 +200,7 @@ namespace
             mScene = OMW64::CellScene();
             mModels->clear();
             mTextures->clear();
+            mTextures->setPageCap(mPaged ? sPageCap : 0);
 
             const ESM::Cell& cell = mIndex.interiors()[mSelected];
             mScene.load(mEsm, cell, mIndex, *mModels,
@@ -199,13 +212,19 @@ namespace
         // Returns when START is pressed.
         void view()
         {
-            float fps = 0.f;
+            float frameTime = 1.f / 60.f;
             std::uint64_t last = get_ticks_us();
             bool showInfo = true;
             while (true)
             {
+#ifdef OMW64_AUTOPLAY_YAW
+                // A fixed view, for comparing screenshots.
+                mCamera.mYaw = static_cast<float>(OMW64_AUTOPLAY_YAW);
+                mCamera.mPitch = static_cast<float>(OMW64_AUTOPLAY_PITCH);
+#else
                 if (sAutoplay)
                     mCamera.mYaw += 0.02f;
+#endif
                 joypad_poll();
                 const joypad_inputs_t in = joypad_get_inputs(JOYPAD_PORT_1);
                 const joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
@@ -217,7 +236,9 @@ namespace
                 const std::uint64_t now = get_ticks_us();
                 const float dt = std::min(0.25f, static_cast<float>(now - last) / 1e6f);
                 last = now;
-                fps = fps * 0.9f + (dt > 0.f ? 0.1f / dt : 0.f);
+                // Average the frame time, not its inverse: frames that
+                // return early from display_get() would skew an fps average.
+                frameTime = frameTime * 0.9f + dt * 0.1f;
 
                 // Stick: walk / turn. C: look and strafe. Z/R: down/up. L: run.
                 const float speed = (in.btn.l ? 1200.f : 400.f) * dt;
@@ -249,7 +270,7 @@ namespace
                 if (showInfo)
                 {
                     text(8, 12, "%.34s", mScene.mName.c_str());
-                    text(8, 24, "%.1f fps  %u objs  %u tris", fps, static_cast<unsigned>(stats.mDrawn),
+                    text(8, 24, "%.1f fps  %u objs  %u tris", 1.f / frameTime, static_cast<unsigned>(stats.mDrawn),
                         static_cast<unsigned>(stats.mTriangles));
                     text(8, 232, "START: cells  B: hide info  RAM %d KB", usedKb());
                 }
@@ -278,7 +299,9 @@ namespace
                         static_cast<unsigned>(mScene.mMissingModels));
                     text(16, 124, "Out of memory:  %u", static_cast<unsigned>(mScene.mSkippedForMemory));
                     text(16, 136, "RAM used: %d / %d KB", usedKb(), totalKb());
-                    text(16, 156, "Press A to walk around");
+                    if (mPaged)
+                        text(16, 147, "Texture pages:  %u KB", static_cast<unsigned>(mTextures->pageBytes() / 1024));
+                    text(16, 158, "Press A to walk around");
 
                     // The textures exactly as they were uploaded, 2x.
                     int x = 16;

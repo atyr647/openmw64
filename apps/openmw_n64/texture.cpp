@@ -198,7 +198,7 @@ namespace OMW64
             return 0;
         }
 
-        bool readDds(std::istream& in, Image& image)
+        bool readDds(std::istream& in, Image& image, int maxTexels)
         {
             std::uint8_t header[128];
             if (!in.read(reinterpret_cast<char*>(header), sizeof(header)) || std::memcmp(header, "DDS ", 4) != 0)
@@ -239,7 +239,7 @@ namespace OMW64
             int w = width;
             int h = height;
             std::size_t skip = 0;
-            for (int level = 0; level + 1 < mipCount && w * h > sMaxTexels; ++level)
+            for (int level = 0; level + 1 < mipCount && w * h > maxTexels; ++level)
             {
                 skip += levelSize(image, w, h);
                 w = std::max(1, w / 2);
@@ -304,6 +304,73 @@ namespace OMW64
             return static_cast<bool>(in);
         }
 
+        void makePages(Texture& texture, const Image& image, int cap, std::size_t& pageBytes)
+        {
+            // Native resolution, halved only to respect the cap. Morrowind's
+            // textures are powers of two, so the page grid divides them exactly.
+            int w = image.mWidth;
+            int h = image.mHeight;
+            while (w > cap || h > cap)
+            {
+                w = std::max(1, w / 2);
+                h = std::max(1, h / 2);
+            }
+            if (w < sPageSize || h < sPageSize || w % sPageSize != 0 || h % sPageSize != 0)
+                return; // too small to be worth paging; the whole texture fits TMEM
+
+            const int step = image.mWidth / w; // 1 at native size, else box-filter
+            texture.mPagedWidth = w;
+            texture.mPagedHeight = h;
+            texture.mPagesX = w / sPageSize;
+            texture.mPagesY = h / sPageSize;
+            texture.mPages.resize(static_cast<std::size_t>(texture.mPagesX) * texture.mPagesY);
+
+            for (int py = 0; py < texture.mPagesY; ++py)
+            {
+                for (int px = 0; px < texture.mPagesX; ++px)
+                {
+                    TexturePage& page = texture.mPages[py * texture.mPagesX + px];
+                    page.mSurface = surface_alloc(FMT_RGBA16, sPageSize, sPageSize);
+                    auto* pixels = static_cast<std::uint16_t*>(page.mSurface.buffer);
+                    const int stride = page.mSurface.stride / 2;
+                    for (int y = 0; y < sPageSize; ++y)
+                    {
+                        for (int x = 0; x < sPageSize; ++x)
+                        {
+                            const int sx = (px * sPageSize + x) * step;
+                            const int sy = (py * sPageSize + y) * step;
+                            Rgba sum{ 0, 0, 0, 0 };
+                            for (int j = 0; j < step; ++j)
+                                for (int i = 0; i < step; ++i)
+                                {
+                                    const Rgba t = image.texel(sx + i, sy + j);
+                                    sum.r += t.r;
+                                    sum.g += t.g;
+                                    sum.b += t.b;
+                                    sum.a += t.a;
+                                }
+                            const int n = step * step;
+                            pixels[y * stride + x] = static_cast<std::uint16_t>(((sum.r / n >> 3) << 11)
+                                | ((sum.g / n >> 3) << 6) | ((sum.b / n >> 3) << 1) | (sum.a / n >= 128 ? 1 : 0));
+                        }
+                    }
+                    data_cache_hit_writeback(page.mSurface.buffer, page.mSurface.stride * sPageSize);
+
+                    glGenTextures(1, &page.mName);
+                    glBindTexture(GL_TEXTURE_2D, page.mName);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                    // Clamp at the page border: the neighbouring page is not in TMEM.
+                    rdpq_texparms_t parms{};
+                    parms.s.repeats = 1;
+                    parms.t.repeats = 1;
+                    glSurfaceTexImageN64(GL_TEXTURE_2D, 0, &page.mSurface, &parms);
+                    pageBytes += static_cast<std::size_t>(page.mSurface.stride) * sPageSize;
+                }
+            }
+            Log(Debug::Info) << "  paged at " << w << "x" << h << ": " << texture.mPages.size() << " pages";
+        }
+
         std::string replaceExtension(std::string_view path, std::string_view ext)
         {
             const std::size_t dot = path.rfind('.');
@@ -321,6 +388,12 @@ namespace OMW64
         if (mName != 0)
             glDeleteTextures(1, &mName);
         surface_free(&mSurface);
+        for (TexturePage& page : mPages)
+        {
+            if (page.mName != 0)
+                glDeleteTextures(1, &page.mName);
+            surface_free(&page.mSurface);
+        }
     }
 
     const Texture* TextureCache::get(std::string_view nifPath)
@@ -357,7 +430,8 @@ namespace OMW64
 
         Image image;
         const bool isDds = path.size() > 4 && path.compare(path.size() - 4, 4, ".dds") == 0;
-        const bool ok = isDds ? readDds(*stream, image) : readTga(*stream, image);
+        const int maxTexels = mPageCap > 0 ? mPageCap * mPageCap : sMaxTexels;
+        const bool ok = isDds ? readDds(*stream, image, maxTexels) : readTga(*stream, image);
         if (!ok)
             return nullptr;
 
@@ -422,6 +496,10 @@ namespace OMW64
         parms.s.repeats = REPEAT_INFINITE;
         parms.t.repeats = REPEAT_INFINITE;
         glSurfaceTexImageN64(GL_TEXTURE_2D, 0, &texture->mSurface, &parms);
+
+        if (mPageCap > 0)
+            makePages(*texture, image, mPageCap, mPageBytes);
         return texture;
     }
+
 }
