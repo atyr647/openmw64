@@ -540,7 +540,7 @@ comes in over:
 so a save holds only what changed since the start of the game, compressed.
 Whether a long game fits in 128 KB is an early test (S7 depends on it).
 
-**The census.** `builder/census` reads a `Data Files` folder (Morrowind.esm,
+**The census.** `rombuilder/census` reads a `Data Files` folder (Morrowind.esm,
 Morrowind.bsa and loose files), converts or measures every category the way
 the builder would, and prints this table with real numbers for each quality
 tier. It is the first step, before any of the conversion work.
@@ -576,7 +576,7 @@ Each milestone ends with a test that runs on real hardware.
 |---|---|---|---|
 | **S0** | **Hardware truth** | Measure on SummerCart64: PI DMA speed from cartridge SDRAM, writing SDRAM from the N64, SD read speed, and a TLB-miss round trip. Build an emulator harness: patch ares for writable cartridge space and SD, or find an emulator that already does both | **K1:** cartridge SDRAM can't be written from the N64 → no data paging → records go through the old roadmap's compact tables (ROADMAP.md §2) |
 | **S1** | **Paged code** | The current viewer runs with its code in mapped, paged memory. Count faults per frame | **K2:** the hot set doesn't fit (more than about 10 faults per frame in steady state, after reordering) → cut code (drop Lua, use `-fno-exceptions` where possible) or go back to the baker |
-| **S1b** | **Census** | `builder/census` on real Morrowind files prints the measured budget; one tier fits 63.9 MB | Over at every tier → drop voice first, then cap more textures at 64×64 |
+| **S1b** | **Census** | `rombuilder/census` on real Morrowind files prints the measured budget; one tier fits 63.9 MB | Over at every tier → drop voice first, then cap more textures at 64×64 |
 | **S2** | **Online builder v0** | A web page, entirely in the browser: pick a `Data Files` folder, get a ROM + SD pack. First with the example-suite, then real Morrowind. OpenMW's readers built to WebAssembly | **K3:** a full Morrowind build takes more than 30 minutes → cache per file, and convert in web workers |
 | **S3** | **OpenMW headless on the N64** | `apps/openmw` with a null renderer loads Morrowind.esm, starts a new game, runs scripts and dialogue in Seyda Neen. Measure page faults and CPU per frame | **K4:** the world update in Balmora takes more than 70 ms per frame after the §4.6 levers → the baker plan's copied rules win |
 | **S4** | **Renderer** | Tiny3D with screen-sized YC page streaming, pages decoded from C64T at load and refined in the background. Seyda Neen and Balmora at 12+ fps, with no page-streaming stalls | Pages never stall a frame (the parent mip level stands in); decoding too slow → ship the region's first mip levels pre-decoded |

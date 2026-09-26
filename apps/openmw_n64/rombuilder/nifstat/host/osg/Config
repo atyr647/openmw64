@@ -1,0 +1,11 @@
+/* Stand-in for OSG's CMake-generated osg/Config: nifstat uses only the math
+ * headers, in single precision like the N64 build (../../compat/osg/Config). */
+#ifndef OSG_CONFIG
+#define OSG_CONFIG 1
+#define OSG_NOTIFY_DISABLED
+#define OSG_USE_FLOAT_MATRIX
+#define OSG_USE_FLOAT_PLANE
+#define OSG_USE_FLOAT_BOUNDINGSPHERE
+#define OSG_USE_FLOAT_BOUNDINGBOX
+#define OSG_USE_FLOAT_QUAT
+#endif

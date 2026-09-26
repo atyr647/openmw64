@@ -1,0 +1,6 @@
+/* Stand-in for the CMake-generated OpenThreads/Config (headers only). */
+#ifndef _OPENTHREADS_CONFIG
+#define _OPENTHREADS_CONFIG
+#define _OPENTHREADS_ATOMIC_USE_GCC_BUILTINS
+#define OT_LIBRARY_STATIC
+#endif

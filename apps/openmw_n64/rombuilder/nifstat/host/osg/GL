@@ -1,0 +1,10 @@
+/* Stand-in for the CMake-generated osg/GL. Only osg/Matrix_implementation.cpp
+ * includes it, for the GLfloat/GLdouble typedefs; nothing calls OpenGL. */
+#ifndef OSG_GL
+#define OSG_GL 1
+#include <osg/Config>
+typedef float GLfloat;
+typedef double GLdouble;
+typedef int GLint;
+typedef unsigned int GLenum;
+#endif
