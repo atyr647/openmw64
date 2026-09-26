@@ -1,6 +1,13 @@
 # OpenMW on the Nintendo 64: Roadmap
 
-*File: `apps/openmw_n64/ROADMAP.md`. Status: plan of record, revised after four independent reviews (RAM, CPU, completeness, data/tooling). Every number here is an estimate until a milestone measures it. When a measurement disagrees with this document, the measurement wins and this file gets updated.*
+> **Superseded.** [PLAN_ALL_ON_N64.md](PLAN_ALL_ON_N64.md) is the current plan:
+> everything runs on the console, including OpenMW's own game code, using
+> the flashcart's SDRAM as virtual memory. This PC-baker design is its
+> fallback if the kill criteria there fire. Its §3 memory estimate for
+> OpenMW's code (4.3–4.9 MB) was also too low: the measured linked size is
+> 15.5 MB without Lua and 27.5 MB with it.
+
+*File: `apps/openmw_n64/ROADMAP.md`. Status: superseded (see above); was the plan of record, revised after four independent reviews (RAM, CPU, completeness, data/tooling). Every number here is an estimate until a milestone measures it. When a measurement disagrees with this document, the measurement wins and this file gets updated.*
 
 ---
 
