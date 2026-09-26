@@ -1,8 +1,9 @@
 # OpenMW on the Nintendo 64: Roadmap
 
 > **Superseded.** [PLAN_ALL_ON_N64.md](PLAN_ALL_ON_N64.md) is the current plan:
-> everything runs on the console, including OpenMW's own game code, using
-> the flashcart's SDRAM as virtual memory. This PC-baker design is its
+> the whole game runs on the console, including OpenMW's own game code, using
+> the flashcart's SDRAM as virtual memory; an online ROM builder converts
+> only the assets. This PC-baker design is its
 > fallback if the kill criteria there fire. Its §3 memory estimate for
 > OpenMW's code (4.3–4.9 MB) was also too low: the measured linked size is
 > 15.5 MB without Lua and 27.5 MB with it.

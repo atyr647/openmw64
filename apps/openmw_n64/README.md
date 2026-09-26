@@ -228,7 +228,8 @@ taken that way in headless ares, built with the Pak repository's
 ## Where this could go next
 
 [PLAN_ALL_ON_N64.md](PLAN_ALL_ON_N64.md) is the current plan: the whole game
-on the console, with no PC tool. It replaces the PC-baker design in
+on the console, with assets converted once by an online ROM builder from the
+player's own files. It replaces the PC-baker design in
 [ROADMAP.md](ROADMAP.md). Smaller next steps for the viewer:
 
 - Exterior cells: `LAND` heightmaps are regular 65×65 grids, a good fit for

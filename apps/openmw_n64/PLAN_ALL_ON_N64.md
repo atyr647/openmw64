@@ -1,4 +1,4 @@
-# OpenMW on the Nintendo 64, all on the console
+# OpenMW on the Nintendo 64, the whole game on the console
 
 *File: `apps/openmw_n64/PLAN_ALL_ON_N64.md`. Status: current plan. It replaces
 the PC-baker design in [ROADMAP.md](ROADMAP.md), which stays as the fallback
@@ -15,9 +15,10 @@ The first roadmap concluded that most of OpenMW would have to run on your PC
 (the "baker") and only a small engine could run on the N64. This plan does not
 accept that. The goal is:
 
-- **Nothing runs on a PC.** You copy Morrowind's `Data Files` folder to the
-  flashcart's SD card, and the N64 does everything else, including converting
-  the data the first time it boots.
+- **The whole game runs on the N64.** Your own files get converted once, by
+  an **online ROM builder**: you give it Morrowind's `Data Files` in the
+  browser, and it gives back a ROM plus a data folder for the flashcart's SD
+  card (§4.3). After that no PC is involved.
 - **OpenMW's real game code runs on the N64.** That means `mwworld`,
   `mwmechanics`, `mwclass`, `mwscript`, `mwdialogue` and `mwstate`, compiled
   nearly unchanged, rather than copied and rewritten.
@@ -32,7 +33,7 @@ accept that. The goal is:
 |---|---|---|---|
 | RDRAM (Expansion Pak) | 8 MB | fast | the working set: what this frame touches |
 | Cartridge SDRAM | 64 MB | a 4 KB page in roughly 0.2–1 ms by PI DMA | code, and the "swap" for the game's memory |
-| SD card | gigabytes | slower, and the CPU waits while it reads | your Data Files, and the converted install |
+| SD card | gigabytes | slower, and the CPU waits while it reads | the builder's data pack: converted assets, the ESM files, saves |
 
 The N64's CPU has a **TLB**, the hardware that lets a program use more memory
 than the machine has. It works by loading pieces ("pages") on demand when the
@@ -114,10 +115,10 @@ apart at N64 resolution.
    compression.
 3. **Splitting luminance from colour inside each page** (the YC pages) gives
    the best quality for the bytes. It is the page format this plan uses.
-4. **The encoder is too slow to run on the N64** (2.1–2.6 s per 256×256
-   texture on a PC). DXT to YC or CI4 pages is simple arithmetic, estimated
-   at about 35 ms per texture on the N64. So the conversion can happen on the
-   console.
+4. **The quadtree encoder is slow** (2.1–2.6 s per 256×256 texture on a
+   PC), so it's used only where it pays off. Building YC or CI4 pages takes
+   about 0.1–0.2 s per 256×256 texture in Node, and the code runs in a browser,
+   which is where the online builder does it (§4.3).
 
 ### 1.3 Proof in the viewer, measured
 
@@ -139,6 +140,39 @@ object's page size from its size **on screen**, so a distant crate uses one
 page and only surfaces right in front of the camera use full-resolution
 pages.
 
+### 1.4 The fix, built into CHROMA64 and measured
+
+CHROMA64 now has this as a library (on its `claude/openmw-n64-port-4w9rdc`
+branch):
+
+- **`chroma64 pages`** builds the page pyramid in YC, RGBA16 or CI4, with
+  cut-out alpha, from PNG, DDS or TGA. The encoder is plain TypeScript and
+  runs in a browser.
+- **`n64/libchroma`** is the N64 side:
+  - a page cache fed by DMA from ROM;
+  - TMEM upload, with the YC combiner;
+  - a level chosen per triangle from its size on screen;
+  - a triangle splitter that runs at load or draw time;
+  - a fallback to the coarsest level when a page isn't loaded yet, so it
+    never stalls.
+- **`n64/pages_demo`** is a room with 512×512 CC0 textures and a cut-out fern.
+
+**Measured in ares** (rdpq directly, not libdragon's GL):
+
+| Case | Frame rate | Pieces per frame |
+|---|---:|---:|
+| Close to a wall, YC pages, level per triangle | 27 fps | 117 |
+| Same view, full resolution forced everywhere | 17 fps | 211 |
+| Walking around the room | 19–35 fps | — |
+
+Pieces are the cut-up triangle parts. Compare 8 fps in the viewer's GL
+version (§1.3).
+
+![Same view in RGBA16, YC and CI4 pages](docs/pages-formats.png)
+
+*Left to right: RGBA16 32×32 (too many pages this close, so it falls back to
+blurry), YC 64×64, CI4 64×64.*
+
 ---
 
 ## 2. What runs where
@@ -146,7 +180,7 @@ pages.
 | Piece | Runs on | OpenMW code | Notes |
 |---|---|---|---|
 | Reading ESM/BSA/NIF | N64 | `components/esm3`, `bsa`, `nif`, unchanged | Already working in the viewer |
-| First-boot install: textures to pages, meshes to N64 vertices, audio index | N64 | `components/nif`, `bsa` + new converters | Writes an install folder on the SD card (§4.3) |
+| Converting assets: textures to pages, meshes to N64 vertices, audio | **Online ROM builder**, in the browser | `components/nif`, `bsa`, `esm3` built to WebAssembly, + CHROMA64's `pages.ts` | Once per player; writes the ROM + SD data pack (§4.3) |
 | Records, world, cells, references | N64 | `mwworld` (ESMStore, CellStore, World), unchanged | Its memory lives in paged memory (§4.1) |
 | Game rules: combat, magic, AI, stats, levelling, crime | N64 | `mwmechanics`, `mwclass`, unchanged | Update rates reduced (§4.6) |
 | MWScript | N64 | `components/compiler` + `interpreter` + `mwscript`, unchanged | Compiled on the N64, cached on SD |
@@ -159,8 +193,8 @@ pages.
 | Input | N64 | `mwinput` + a **new** joypad backend | |
 | Lua | N64, later (S8) | `mwlua` | 12 MB of code. See §3 |
 
-The only things you do on a PC are copying `Data Files` to the SD card and
-copying the ROM to the SD card.
+On a PC you only run the builder web page once and copy its output to the SD
+card.
 
 ---
 
@@ -277,9 +311,11 @@ What this means:
 
 ### 4.2 Storage: SD card to cartridge SDRAM to RDRAM
 
-- **SD card: `Data Files` and the install folder** (`sd:/omw64/`). It holds
-  every converted texture page, mesh, the compiled scripts and the saves.
-  There is no 64 MB cap, which is what makes Tribunal and Bloodmoon possible.
+- **SD card: the builder's data pack** (`sd:/omw64/`). It holds every
+  converted texture page, mesh and sound, the ESM files (OpenMW's own record
+  loading reads them unchanged), and the saves. The BSAs aren't needed on
+  the console any more. There is no 64 MB cap, which is what makes Tribunal
+  and Bloodmoon possible.
 - **Cartridge SDRAM: a 64 MB cache.**
   - What goes in: the program image (15–28 MB, see §3), the paged heap, and
     the assets of the current region.
@@ -287,31 +323,52 @@ What this means:
   - Why: SD reads through libcart keep the CPU busy the whole time, so they
     must never happen in the middle of a frame.
 - **RDRAM: the pages this frame touches.**
-- **Tribunal and Bloodmoon** only add to the install folder and to
-  `ESMStore`. Their records page like the rest.
+- **Tribunal and Bloodmoon** only add to the data pack and to `ESMStore`.
+  Their records page like the rest.
 
-### 4.3 The first-boot install, on the N64
+### 4.3 The online ROM builder
 
-On the first boot the ROM finds `Data Files`, checks the ESM files, and
-converts everything into the install folder. It shows a progress screen and
-can resume if power is lost.
+The player opens a web page, points it at their `Data Files` folder, and
+downloads two things:
 
-| Step | What | Estimate |
+- **The ROM:** OpenMW for the N64, the same for everyone, plus a small
+  index.
+- **A data pack for the SD card:** everything converted from their files.
+
+**Where the conversion runs.** It should run **in the browser**, so the game
+files never leave the player's computer:
+
+- CHROMA64's page encoder and DDS/TGA readers (`pages.ts`, `dds.ts`,
+  `split.ts`) already run in a browser.
+- OpenMW's readers (`components/esm3`, `bsa`, `nif`) are plain C++ and can
+  be built to WebAssembly with Emscripten.
+
+**The steps.** Running on a PC, the builder can do the work that was too
+slow for the console:
+
+| Step | What | Estimate (browser) |
 |---|---|---|
-| Records index | One pass over each ESM (80 + 5 + 10 MB), like the viewer's index. OpenMW's own loading happens at "new game" time and pages | a few minutes, mostly SD reads |
-| Textures | 5,187 DDS in Morrowind.bsa, plus the expansions'. Decode DXT, write a mip pyramid of YC pages | ≈ 35 ms each, ~5–10 minutes |
-| Meshes | 5,798 NIFs in Morrowind.bsa, plus the expansions'. Parse with `components/nif` (as the viewer does), flatten, write N64 vertex data and page splits for each mip level | unknown; S2 measures it. Could be done lazily on first use instead |
-| Scripts | Compile every SCPT with `components/compiler`, cache the bytecode | fast |
-| Audio | Index the MP3s; decode or transcode as decided in §4.5 | none, or lazily |
+| Textures | 5,187 DDS in Morrowind.bsa, plus the expansions'. YC pages for most; CHROMA64's quadtree for sky, water and distant terrain, where it compresses well | about 0.1–0.2 s each for 256² YC, one core; web workers divide that by the core count |
+| Meshes | 5,798 NIFs in Morrowind.bsa, plus the expansions'. Parse with `components/nif`, flatten, write N64 vertex data, and pre-split each mesh for each mip level | minutes |
+| Audio | Transcode the MP3 voice and music to a format libdragon plays cheaply: VADPCM, or Opus in wav64, which is RSP-assisted | minutes; MP3 decoding in the browser is fast |
+| ESM files | Copied as they are; the N64 runs OpenMW's own loader on them | — |
+| Check | Hash the ESMs against known versions; warn about unknown ones | — |
 
-The same converter runs lazily for anything the install skipped, so the first
-boot can be kept short.
+**This is not the old PC baker.** That design converted the *game logic* into
+compact tables and rewrote Morrowind's rules for a small engine. The builder
+converts only *assets*; the rules on the console are still OpenMW's own code.
+If kill criterion K1 fires (no writable cartridge memory), the builder is
+also where the old roadmap's compact record tables would be made.
 
-**Legal note:** because the conversion happens on your own console from your
-own copy of the game, nothing derived from Morrowind is ever distributed. The
-ROM and this repository contain only OpenMW (GPL) code and CC0 test data.
-CHROMA64's "never stores the source" design wouldn't make Morrowind-derived
-pages shareable anyway; converting on the console does.
+**Legal note.** No one distributes anything made from Morrowind:
+
+- the builder page and the ROM contain only OpenMW (GPL) and CHROMA64 (MIT)
+  code;
+- each player converts their own copy.
+
+If the conversion ever runs on a server instead of in the browser, the server
+must delete uploads after the build and serve the output only to the person
+who uploaded it. Running it client-side avoids the question.
 
 ### 4.4 Renderer: Tiny3D with screen-sized texture pages
 
@@ -341,25 +398,24 @@ pages shareable anyway; converting on the console does.
     screen at 1:1, so there are never more than a few dozen full-resolution
     pieces per frame.
 - **Page cache.** About 1 MB of RDRAM, least-recently-used, refilled from
-  cartridge SDRAM by PI DMA. A missing page draws its parent mip level for a
-  frame; it never stalls.
+  cartridge SDRAM by PI DMA. A missing page draws its coarsest level for a
+  frame; it never stalls. This is `n64/libchroma` (§1.4); it needs porting
+  from rdpq triangles to Tiny3D's pipeline.
 - **Terrain, sky and water.** These are CHROMA64's real strength: smooth,
-  large surfaces where its quadtree compresses well. The install can run a
-  simplified CHROMA64 encoder for them; there are few enough of them for its
-  speed not to matter.
+  large surfaces where its quadtree compresses well. The builder runs the
+  full encoder for them.
+- **Known gaps from the demo.** Pages clamp at their borders, and cuts in
+  neighbouring triangles don't always meet, so faint seams can show close
+  up. A 1-texel page border and shared cut vertices fix them.
 
 ### 4.5 Sound
 
 - **Voice and music are MP3** (6,448 voice files, 128 MB; 18 music tracks,
   39 MB).
-- **Option A: decode MP3 as it plays.** Decode on the CPU (a fixed-point
-  decoder), or on the RSP if a decoder exists or gets written. Voice lines
-  are short and mono. Cost: CPU time while someone speaks.
-- **Option B: transcode lazily to a codec libdragon plays cheaply** (VADPCM,
-  or Opus through wav64, which is RSP-assisted). A line is decoded once, the
-  first time it plays, then cached on SD.
-- **Which one:** S5 measures decode speed and picks. Sound effects are WAV
-  and can be converted at install time.
+- **The builder transcodes them** to a codec libdragon plays cheaply:
+  VADPCM, or Opus in wav64, which is RSP-assisted. The N64 never decodes MP3.
+- **Which codec:** S5 compares their size on SD against their CPU and RSP
+  cost. Sound effects are WAV and are converted the same way.
 
 ### 4.6 The CPU wall
 
@@ -410,7 +466,7 @@ Each milestone ends with a test that runs on real hardware.
 |---|---|---|---|
 | **S0** | **Hardware truth** | Measure on SummerCart64: PI DMA speed from cartridge SDRAM, writing SDRAM from the N64, SD read speed, and a TLB-miss round trip. Build an emulator harness: patch ares for writable cartridge space and SD, or find an emulator that already does both | **K1:** cartridge SDRAM can't be written from the N64 → no data paging → records go through the old roadmap's compact tables (ROADMAP.md §2) |
 | **S1** | **Paged code** | The current viewer runs with its code in mapped, paged memory. Count faults per frame | **K2:** the hot set doesn't fit (more than about 10 faults per frame in steady state, after reordering) → cut code (drop Lua, use `-fno-exceptions` where possible) or go back to the baker |
-| **S2** | **On-console install** | Convert the example-suite, then real Morrowind, on hardware. Time it; resume after a power cut | **K3:** a full install takes more than 1 hour → convert lazily only |
+| **S2** | **Online builder v0** | A web page, entirely in the browser: pick a `Data Files` folder, get a ROM + SD pack. First with the example-suite, then real Morrowind. OpenMW's readers built to WebAssembly | **K3:** a full Morrowind build takes more than 30 minutes → cache per file, and convert in web workers |
 | **S3** | **OpenMW headless on the N64** | `apps/openmw` with a null renderer loads Morrowind.esm, starts a new game, runs scripts and dialogue in Seyda Neen. Measure page faults and CPU per frame | **K4:** the world update in Balmora takes more than 70 ms per frame after the §4.6 levers → the baker plan's copied rules win |
 | **S4** | **Renderer** | Tiny3D with screen-sized YC page streaming. Seyda Neen and Balmora at 12+ fps, with no page-streaming stalls | Pages never stall a frame (the parent mip level stands in) |
 | **S5** | **Sound, input, GUI** | MyGUI on rdpq; the menus, inventory, dialogue and journal work with a controller; voice plays | |
@@ -448,8 +504,10 @@ task:
   handler.
   **Measured:** libdragon handles TLB exceptions only as crashes, but
   `register_exception_handler()` lets a program take them over.
-- MP3 decode speed on the VR4300 or the RSP.
-- Morrowind's voice and music bit rates, which set the decode cost.
+- The CPU and RSP cost of playing VADPCM or Opus voice and music alongside
+  everything else.
+- That OpenMW's `components/esm3`, `bsa` and `nif` build with Emscripten
+  without changes (they are plain C++, and already build for MIPS).
 
 ---
 
